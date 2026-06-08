@@ -1,12 +1,13 @@
 {
-  "name": "zerodha-kite-auto-trader-backend",
+  "name": "chartoon-networth-be",
   "version": "1.0.0",
-  "description": "Production-ready backend for automated stock selection and trading using Zerodha Kite API. Paper trading mode by default.",
+  "description": "Production-ready backend for Chartoon Networth: automated stock selection and trading using Zerodha Kite API.",
   "main": "app.js",
   "type": "module",
   "scripts": {
     "start": "node app.js",
     "dev": "nodemon app.js",
+    "encrypt": "node scripts/encrypt.js",
     "lint": "echo 'Add eslint if needed'"
   },
   "keywords": [

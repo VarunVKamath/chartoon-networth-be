@@ -9,6 +9,7 @@ import { KiteConnect } from 'kiteconnect';
 import dotenv from 'dotenv';
 import winston from 'winston';
 import { sessionService } from './sessionService.js';
+import { decryptIfNeeded } from './cryptoService.js';
 
 dotenv.config();
 
@@ -33,12 +34,13 @@ let paperPosition = null;
  * Initialize Kite Connect SDK client
  */
 export const initializeKite = (apiKey = process.env.KITE_API_KEY || process.env.API_KEY) => {
-  if (!apiKey) {
+  const decryptedKey = decryptIfNeeded(apiKey);
+  if (!decryptedKey) {
     logger.warn('[KiteService] API_KEY / KITE_API_KEY is not defined. Kite initialization pending credentials.');
     return null;
   }
-  kiteInstance = new KiteConnect({ api_key: apiKey });
-  logger.info('KiteConnect instance initialized', { apiKey: apiKey.substring(0, 6) + '...' });
+  kiteInstance = new KiteConnect({ api_key: decryptedKey });
+  logger.info('KiteConnect instance initialized', { apiKey: decryptedKey.substring(0, 6) + '...' });
   return kiteInstance;
 };
 
@@ -120,7 +122,7 @@ export const generateSession = async (requestToken) => {
     throw new Error('KiteConnect not initialized.');
   }
   try {
-    const apiSecret = process.env.KITE_API_SECRET || process.env.API_SECRET;
+    const apiSecret = decryptIfNeeded(process.env.KITE_API_SECRET || process.env.API_SECRET);
     if (!apiSecret) {
       throw new Error('KITE_API_SECRET / API_SECRET is required but not configured.');
     }

@@ -38,8 +38,28 @@ const logger = winston.createLogger({
 });
 
 // Middleware
+const allowedOrigins = ['http://localhost:3000', 'http://localhost:5173', 'http://localhost:5174'];
+if (process.env.FRONTEND_URL) {
+  allowedOrigins.push(process.env.FRONTEND_URL);
+}
+
 app.use(cors({
-  origin: ['http://localhost:3000', 'http://localhost:5173'], // Vite default + CRA
+  origin: (origin, callback) => {
+    // Allow requests with no origin (like mobile apps, curl, or server-to-server)
+    if (!origin) return callback(null, true);
+    
+    const isAllowed = allowedOrigins.includes(origin) || 
+                      origin.endsWith('.vercel.app') || 
+                      /^http:\/\/localhost:\d+$/.test(origin) || 
+                      /^http:\/\/127\.0\.0\.1:\d+$/.test(origin);
+                      
+    if (isAllowed) {
+      callback(null, true);
+    } else {
+      console.warn(`Origin ${origin} blocked by CORS`);
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
   credentials: true
 }));
 app.use(express.json({ limit: '10mb' }));
@@ -60,7 +80,7 @@ app.use('/api', apiRoutes);
 // Root health check
 app.get('/', (req, res) => {
   res.json({
-    message: 'Zerodha Kite Auto Trader Backend',
+    message: 'Chartoon Networth Backend',
     version: '1.0.0',
     mode: process.env.REAL_TRADING === 'true' ? 'REAL_TRADING_WARNING' : 'PAPER_TRADING_SAFE',
     docs: '/api/health'
