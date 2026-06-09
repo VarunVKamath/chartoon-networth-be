@@ -31,6 +31,8 @@ try {
   console.error(`[SessionService] Failed to create storage directory: ${error.message}`);
 }
 
+const SESSION_EXPIRY_HOURS = 24;
+
 export const sessionService = {
   /**
    * Save the session details locally and update memory
@@ -74,7 +76,13 @@ export const sessionService = {
    * @returns {boolean} True if access token is loaded
    */
   isConnected() {
-    return !!inMemorySession.accessToken;
+    return !!inMemorySession.accessToken && !this.isSessionExpired();
+  },
+
+  isSessionExpired() {
+    if (!inMemorySession.loginTime) return true;
+    const diffHours = (Date.now() - new Date(inMemorySession.loginTime).getTime()) / (1000 * 60 * 60);
+    return diffHours > SESSION_EXPIRY_HOURS;
   },
 
   /**
@@ -122,6 +130,13 @@ export const sessionService = {
             userName: data.userName || null,
             loginTime: data.loginTime || null
           };
+
+          if (this.isSessionExpired()) {
+            console.log('[SessionService] Session expired (24h limit). Clearing.');
+            this.clearSession();
+            return null;
+          }
+
           console.log(`[SessionService] Session loaded for user: ${inMemorySession.userName || 'Unknown'}`);
           return inMemorySession;
         }

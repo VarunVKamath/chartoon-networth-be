@@ -23,15 +23,17 @@ const logger = winston.createLogger({
 const SCORE_THRESHOLD = parseFloat(process.env.SCORE_THRESHOLD) || 65;
 const MIN_VOLUME = 50000; // Minimum volume to consider (adjust based on stock)
 
-// Default stock universe (configurable via API later)
+// Expanded universe for better opportunities (25 high momentum/volatile NSE stocks)
 export let STOCK_UNIVERSE = [
-  "RELIANCE", "TCS", "INFY", "HDFCBANK", "ICICIBANK",
-  "SBIN", "LT", "AXISBANK", "ITC", "BHARTIARTL"
+  "RELIANCE", "TCS", "INFY", "HDFCBANK", "ICICIBANK", "SBIN", "LT", 
+  "AXISBANK", "ITC", "BHARTIARTL", "KOTAKBANK", "BAJFINANCE", "SUNPHARMA",
+  "HINDUNILVR", "MARUTI", "TATAMOTORS", "POWERGRID", "NTPC", "ONGC",
+  "COALINDIA", "TATASTEEL", "JSWSTEEL", "GRASIM", "TECHM", "WIPRO"
 ];
 
 export const updateStockUniverse = (newStocks) => {
-  if (!Array.isArray(newStocks) || newStocks.length !== 10) {
-    throw new Error('Exactly 10 stocks required');
+  if (!Array.isArray(newStocks) || newStocks.length < 10 || newStocks.length > 30) {
+    throw new Error('Stock universe must be between 10 and 30 stocks');
   }
   // Basic validation: uppercase, no spaces
   const cleaned = newStocks.map(s => s.trim().toUpperCase());
@@ -169,12 +171,14 @@ export const selectBestStock = async () => {
   const ranked = await scanAndRankStocks();
   
   if (!ranked || ranked.length === 0) {
-    return { bestStock: null, shouldTrade: false, reason: 'No stocks scanned' };
+    return { bestStocks: [], shouldTrade: false, reason: 'No stocks scanned' };
   }
 
-  const best = ranked[0];
-  
-  // Strict filters for quality trade
+  // Dark Arts: Select up to 2 best stocks for better profit potential with ₹5000 capital
+  const topStocks = ranked.slice(0, 2);
+  const best = topStocks[0];
+
+  // Strict filters 
   const hasPositiveGap = best.gapPercent > 0;
   const hasPositiveMomentum = best.momentumPercent > 0;
   const hasDecentVolume = best.rawVolume > MIN_VOLUME;
@@ -192,14 +196,20 @@ export const selectBestStock = async () => {
     reason = `Best score ${best.finalScore} below threshold ${SCORE_THRESHOLD}. No trade.`;
   } else {
     shouldTrade = true;
-    reason = `Selected ${best.symbol} with score ${best.finalScore}`;
+    reason = `Selected top ${topStocks.length} stocks for max profit (₹5000 capital)`;
   }
 
-  logger.info('Trade decision', { symbol: best.symbol, shouldTrade, reason, score: best.finalScore });
+  logger.info('Trade decision', { 
+    topStocks: topStocks.map(s => s.symbol), 
+    shouldTrade, 
+    reason, 
+    topScore: best.finalScore 
+  });
 
   return {
-    bestStock: best,
-    rankedStocks: ranked, // full list for dashboard
+    bestStocks: topStocks,   // Changed to support multi-stock
+    bestStock: best,         // Keep for backward compatibility
+    rankedStocks: ranked,
     shouldTrade,
     reason
   };

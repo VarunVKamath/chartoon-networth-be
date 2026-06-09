@@ -38,7 +38,12 @@ const logger = winston.createLogger({
 });
 
 // Middleware
-const allowedOrigins = ['http://localhost:3000', 'http://localhost:5173', 'http://localhost:5174'];
+const allowedOrigins = [
+  'http://localhost:3000',
+  'http://localhost:5173',
+  'http://localhost:5174',
+  'https://chartoon-networth-agfwgvapa9aaesgk.canadacentral-01.azurewebsites.net'
+];
 if (process.env.FRONTEND_URL) {
   allowedOrigins.push(process.env.FRONTEND_URL);
 }
@@ -50,6 +55,7 @@ app.use(cors({
     
     const isAllowed = allowedOrigins.includes(origin) || 
                       origin.endsWith('.vercel.app') || 
+                      origin.endsWith('.azurewebsites.net') || 
                       /^http:\/\/localhost:\d+$/.test(origin) || 
                       /^http:\/\/127\.0\.0\.1:\d+$/.test(origin);
                       
