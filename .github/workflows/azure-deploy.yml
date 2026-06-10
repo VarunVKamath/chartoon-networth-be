@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 env:
-  AZURE_WEBAPP_NAME: 'chartoon-networth'
+  AZURE_WEBAPP_NAME: 'chartoon-networth-agfwgvapa9aaesgk'
   NODE_VERSION: '18.x'
 
 jobs:
@@ -35,6 +35,45 @@ jobs:
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
           allow-no-subscriptions: true
+
+      - name: Configure Azure App Settings
+        uses: azure/appservice-settings@v1
+        with:
+          app-name: ${{ env.AZURE_WEBAPP_NAME }}
+          app-settings-json: |
+            [
+              {
+                "name": "KITE_API_KEY",
+                "value": "3xocdwcvyuyp241k",
+                "slotSetting": false
+              },
+              {
+                "name": "KITE_API_SECRET",
+                "value": "jtlx7xvj3wnxo0k31pd1389x3z83o1uh",
+                "slotSetting": false
+              },
+              {
+                "name": "REAL_TRADING",
+                "value": "false",
+                "slotSetting": false
+              },
+              {
+                "name": "TZ",
+                "value": "Asia/Kolkata",
+                "slotSetting": false
+              },
+              {
+                "name": "WEBSITE_TIMEZONE",
+                "value": "Asia/Kolkata",
+                "slotSetting": false
+              },
+              {
+                "name": "FRONTEND_URL",
+                "value": "https://chartoon-networth-fe.vercel.app",
+                "slotSetting": false
+              }
+            ]
+          general-settings-json: '{"alwaysOn": "true"}'
 
       - name: Deploy to Azure Web App
         uses: azure/webapps-deploy@v3
