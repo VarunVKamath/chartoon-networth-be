@@ -1,4 +1,3 @@
-# GitHub Actions workflow to deploy the Node.js backend to Azure App Service on push to main branch.
 name: Deploy to Azure App Service
 
 on:
@@ -8,7 +7,7 @@ on:
   workflow_dispatch:
 
 env:
-  AZURE_WEBAPP_NAME: 'chartoon-networth-agfwgvapa9aaesgk' # Set this to your Azure App Service name
+  AZURE_WEBAPP_NAME: 'chartoon-networth-agfwgvapa9aaesgk'
   NODE_VERSION: '18.x'
 
 jobs:
@@ -23,25 +22,21 @@ jobs:
         uses: actions/setup-node@v3
         with:
           node-version: ${{ env.NODE_VERSION }}
-          cache: 'npm'
+          cache: npm
 
       - name: Install Dependencies
         run: npm ci
 
-      # Optional: Add linting/testing steps here if needed in the future
-      # - name: Run Lint
-      #   run: npm run lint
-
-      # Standard App Service deployment packages everything except devDependencies.
-      # Prune development dependencies to keep the package small.
       - name: Prune Dev Dependencies
         run: npm prune --production
 
-      # Deploy using Azure Publish Profile.
-      # You need to download the Publish Profile from the Azure Portal and add it as a GitHub Secret.
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
       - name: Deploy to Azure Web App
-        uses: azure/webapps-deploy@v2
+        uses: azure/webapps-deploy@v3
         with:
           app-name: ${{ env.AZURE_WEBAPP_NAME }}
-          publish-profile: ${{ secrets.AZURE_APP_SERVICE_PUBLISH_PROFILE }}
           package: .
