@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 env:
-  AZURE_WEBAPP_NAME: 'chartoon-networth-agfwgvapa9aaesgk'
+  AZURE_WEBAPP_NAME: 'chartoon-networth'
   NODE_VERSION: '18.x'
 
 jobs:
