@@ -8,8 +8,16 @@
 import { KiteConnect } from 'kiteconnect';
 import dotenv from 'dotenv';
 import winston from 'winston';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import { sessionService } from './sessionService.js';
 import { decryptIfNeeded } from './cryptoService.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const STORAGE_DIR = path.join(__dirname, '../storage');
+const MODE_FILE = path.join(STORAGE_DIR, 'mode.json');
 
 dotenv.config();
 
@@ -25,7 +33,31 @@ const logger = winston.createLogger({
 });
 
 let kiteInstance = null;
-let isRealTrading = process.env.REAL_TRADING === 'true';
+
+const loadTradingMode = () => {
+  try {
+    if (fs.existsSync(MODE_FILE)) {
+      const data = JSON.parse(fs.readFileSync(MODE_FILE, 'utf-8'));
+      return data.isRealTrading === true;
+    }
+  } catch (error) {
+    console.error(`[KiteService] Failed to load trading mode from file: ${error.message}`);
+  }
+  return process.env.REAL_TRADING === 'true';
+};
+
+const saveTradingMode = (isReal) => {
+  try {
+    if (!fs.existsSync(STORAGE_DIR)) {
+      fs.mkdirSync(STORAGE_DIR, { recursive: true });
+    }
+    fs.writeFileSync(MODE_FILE, JSON.stringify({ isRealTrading: isReal }, null, 2), 'utf-8');
+  } catch (error) {
+    console.error(`[KiteService] Failed to save trading mode to file: ${error.message}`);
+  }
+};
+
+let isRealTrading = loadTradingMode();
 
 export const getRealTradingMode = () => isRealTrading;
 
@@ -344,5 +376,6 @@ export const clearPaperPosition = () => { paperPosition = null; };
 
 export const setRealTradingMode = (enabled) => {
   isRealTrading = !!enabled;
-  logger.warn(`Real trading mode ${enabled ? 'ENABLED' : 'DISABLED'} at runtime`);
+  saveTradingMode(isRealTrading);
+  logger.warn(`Real trading mode ${enabled ? 'ENABLED' : 'DISABLED'} at runtime and persisted`);
 };
