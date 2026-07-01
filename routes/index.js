@@ -242,22 +242,22 @@ router.post('/test/trigger-idea-buy', async (req, res) => {
       if (global.liveLogs.length > 100) global.liveLogs.shift();
     };
 
-    pushLiveLog(`[TEST MODE] Scheduled buy of 1 share of IDEA in ${delaySeconds} seconds.`, 'info');
+    pushLiveLog(`[TEST MODE] Scheduled buy of 1 share of IDEA (AMO) in ${delaySeconds} seconds.`, 'info');
 
     setTimeout(async () => {
       try {
         if (!isSessionActive()) {
-          pushLiveLog(`[TEST MODE] Scheduled buy of IDEA failed: Kite session is no longer active.`, 'error');
+          pushLiveLog(`[TEST MODE] Scheduled buy of IDEA (AMO) failed: Kite session is no longer active.`, 'error');
           return;
         }
 
-        pushLiveLog(`[TEST MODE] Triggering scheduled buy of 1 share of IDEA.`, 'info');
-        const result = await manualBuy('IDEA', 1, true);
+        pushLiveLog(`[TEST MODE] Triggering scheduled buy of 1 share of IDEA (AMO).`, 'info');
+        const result = await manualBuy('IDEA', 1, true, 'amo');
         
         if (result.success) {
-          pushLiveLog(`[TEST MODE] Scheduled buy of 1 share of IDEA executed successfully! Order ID: ${result.order?.order_id || 'N/A'}.`, 'info');
+          pushLiveLog(`[TEST MODE] Scheduled buy of 1 share of IDEA (AMO) executed successfully! Order ID: ${result.order?.order_id || 'N/A'}.`, 'info');
         } else {
-          pushLiveLog(`[TEST MODE] Scheduled buy of 1 share of IDEA failed: ${result.reason}`, 'error');
+          pushLiveLog(`[TEST MODE] Scheduled buy of 1 share of IDEA (AMO) failed: ${result.reason}`, 'error');
         }
       } catch (err) {
         pushLiveLog(`[TEST MODE] Error executing scheduled buy: ${err.message}`, 'error');
@@ -266,7 +266,7 @@ router.post('/test/trigger-idea-buy', async (req, res) => {
 
     res.json({
       success: true,
-      message: `Scheduled buy of 1 share of IDEA in ${delaySeconds} seconds`
+      message: `Scheduled buy of 1 share of IDEA (AMO) in ${delaySeconds} seconds`
     });
 
   } catch (error) {

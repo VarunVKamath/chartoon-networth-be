@@ -78,7 +78,8 @@ export const executeBuy = async (bestStock) => {
       transaction_type: 'BUY',
       quantity,
       order_type: 'MARKET',
-      product: 'MIS'
+      product: 'MIS',
+      variety: bestStock.variety || 'regular'
     });
 
     // Update entry price from actual fill if available (paper uses lastPrice)
@@ -276,14 +277,15 @@ export const resetDailyState = () => {
 /**
  * Manual buy for testing (respects paper mode)
  */
-export const manualBuy = async (symbol, quantity, bypassTradeCheck = false) => {
+export const manualBuy = async (symbol, quantity, bypassTradeCheck = false, variety = 'regular') => {
   // Simulate bestStock object
   const fakeBest = {
     symbol: symbol.toUpperCase(),
     lastPrice: 1000, // Will be overwritten by real quote in executeBuy
     openPrice: 1000,
     quantity,
-    bypassTradeCheck
+    bypassTradeCheck,
+    variety
   };
   return executeBuy(fakeBest);
 };

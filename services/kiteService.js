@@ -235,6 +235,7 @@ export const placeOrder = async (orderParams) => {
     quantity,
     order_type = 'MARKET',
     product = 'MIS', // Intraday
+    variety = 'regular',
     ...rest
   } = orderParams;
 
@@ -248,6 +249,7 @@ export const placeOrder = async (orderParams) => {
       quantity,
       order_type,
       product,
+      variety,
       status: 'COMPLETE',
       average_price: orderParams.price || 0,
       placed_at: new Date().toISOString(),
@@ -283,7 +285,7 @@ export const placeOrder = async (orderParams) => {
 
   return executeKiteCall(async () => {
     const kite = getKiteInstance();
-    const orderResponse = await kite.placeOrder(order_type, {
+    const orderResponse = await kite.placeOrder(variety, {
       tradingsymbol,
       exchange,
       transaction_type,
