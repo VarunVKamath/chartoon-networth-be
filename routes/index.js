@@ -204,4 +204,58 @@ router.post('/dashboard/reset', (req, res) => {
   res.json({ success: true, message: 'Daily state reset' });
 });
 
+// === TEST MODE / DIAGNOSTICS ===
+router.post('/test/trigger-idea-buy', async (req, res) => {
+  try {
+    if (!isSessionActive()) {
+      return res.status(400).json({ error: 'Kite session is not active. Please connect Zerodha first.' });
+    }
+
+    const delaySeconds = req.body.delaySeconds !== undefined ? parseInt(req.body.delaySeconds, 10) : 60;
+    if (isNaN(delaySeconds) || delaySeconds < 0) {
+      return res.status(400).json({ error: 'Invalid delaySeconds' });
+    }
+
+    const pushLiveLog = (message, level = 'info') => {
+      if (!global.liveLogs) global.liveLogs = [];
+      global.liveLogs.push({
+        time: new Date().toISOString(),
+        message,
+        level
+      });
+      if (global.liveLogs.length > 100) global.liveLogs.shift();
+    };
+
+    pushLiveLog(`[TEST MODE] Scheduled buy of 1 share of IDEA in ${delaySeconds} seconds.`, 'info');
+
+    setTimeout(async () => {
+      try {
+        if (!isSessionActive()) {
+          pushLiveLog(`[TEST MODE] Scheduled buy of IDEA failed: Kite session is no longer active.`, 'error');
+          return;
+        }
+
+        pushLiveLog(`[TEST MODE] Triggering scheduled buy of 1 share of IDEA.`, 'info');
+        const result = await manualBuy('IDEA', 1, true);
+        
+        if (result.success) {
+          pushLiveLog(`[TEST MODE] Scheduled buy of 1 share of IDEA executed successfully! Order ID: ${result.order?.order_id || 'N/A'}.`, 'info');
+        } else {
+          pushLiveLog(`[TEST MODE] Scheduled buy of 1 share of IDEA failed: ${result.reason}`, 'error');
+        }
+      } catch (err) {
+        pushLiveLog(`[TEST MODE] Error executing scheduled buy: ${err.message}`, 'error');
+      }
+    }, delaySeconds * 1000);
+
+    res.json({
+      success: true,
+      message: `Scheduled buy of 1 share of IDEA in ${delaySeconds} seconds`
+    });
+
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 export default router;

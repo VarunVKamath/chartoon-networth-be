@@ -57,7 +57,7 @@ export const canTradeToday = () => {
  * Stores entry details and starts SL/Target monitor.
  */
 export const executeBuy = async (bestStock) => {
-  if (!canTradeToday()) {
+  if (!bestStock.bypassTradeCheck && !canTradeToday()) {
     addLog('Trade already executed today. Skipping.', 'warn');
     return { success: false, reason: 'Already traded today' };
   }
@@ -70,7 +70,7 @@ export const executeBuy = async (bestStock) => {
     return { success: false, reason: 'Invalid price' };
   }
 
-  const quantity = POSITION_SIZE;
+  const quantity = bestStock.quantity || POSITION_SIZE;
 
   try {
     const orderResult = await placeOrder({
@@ -276,12 +276,14 @@ export const resetDailyState = () => {
 /**
  * Manual buy for testing (respects paper mode)
  */
-export const manualBuy = async (symbol) => {
+export const manualBuy = async (symbol, quantity, bypassTradeCheck = false) => {
   // Simulate bestStock object
   const fakeBest = {
     symbol: symbol.toUpperCase(),
     lastPrice: 1000, // Will be overwritten by real quote in executeBuy
-    openPrice: 1000
+    openPrice: 1000,
+    quantity,
+    bypassTradeCheck
   };
   return executeBuy(fakeBest);
 };
