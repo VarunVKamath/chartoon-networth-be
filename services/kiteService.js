@@ -25,7 +25,9 @@ const logger = winston.createLogger({
 });
 
 let kiteInstance = null;
-const isRealTrading = process.env.REAL_TRADING === 'true';
+let isRealTrading = process.env.REAL_TRADING === 'true';
+
+export const getRealTradingMode = () => isRealTrading;
 
 // In-memory current position for paper trading simulation
 let paperPosition = null;
@@ -339,5 +341,6 @@ export const getCurrentPaperPosition = () => paperPosition;
 export const clearPaperPosition = () => { paperPosition = null; };
 
 export const setRealTradingMode = (enabled) => {
+  isRealTrading = !!enabled;
   logger.warn(`Real trading mode ${enabled ? 'ENABLED' : 'DISABLED'} at runtime`);
 };

@@ -12,7 +12,9 @@ import {
   initializeKite, 
   getLoginURL, 
   generateSession, 
-  isSessionActive 
+  isSessionActive,
+  getRealTradingMode,
+  setRealTradingMode
 } from '../services/kiteService.js';
 import { sessionService } from '../services/sessionService.js';
 import { 
@@ -39,7 +41,7 @@ router.get('/health', (req, res) => {
     status: 'ok', 
     timestamp: new Date().toISOString(),
     kiteSessionActive: isSessionActive(),
-    tradingMode: process.env.REAL_TRADING === 'true' ? 'REAL' : 'PAPER'
+    tradingMode: getRealTradingMode() ? 'REAL' : 'PAPER'
   });
 });
 
@@ -96,7 +98,7 @@ router.get('/auth/status', (req, res) => {
     userName: session.userName,
     userId: session.userId,
     loginTime: session.loginTime,
-    mode: process.env.REAL_TRADING === 'true' ? 'REAL_TRADING' : 'PAPER_TRADING'
+    mode: getRealTradingMode() ? 'REAL' : 'PAPER'
   });
 });
 
@@ -190,7 +192,7 @@ router.get('/dashboard/status', (req, res) => {
   res.json({
     status,
     currentTrade: trade,
-    mode: process.env.REAL_TRADING === 'true' ? 'REAL' : 'PAPER',
+    mode: getRealTradingMode() ? 'REAL' : 'PAPER',
     lastUpdated: new Date().toISOString()
   });
 });
@@ -202,6 +204,20 @@ router.get('/dashboard/logs', (req, res) => {
 router.post('/dashboard/reset', (req, res) => {
   resetDailyState();
   res.json({ success: true, message: 'Daily state reset' });
+});
+
+router.post('/trade/mode', (req, res) => {
+  try {
+    const { mode } = req.body;
+    if (mode !== 'REAL' && mode !== 'PAPER') {
+      return res.status(400).json({ error: "Invalid mode. Must be 'REAL' or 'PAPER'" });
+    }
+    const enabled = mode === 'REAL';
+    setRealTradingMode(enabled);
+    res.json({ success: true, mode: enabled ? 'REAL' : 'PAPER' });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
 });
 
 // === TEST MODE / DIAGNOSTICS ===
