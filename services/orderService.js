@@ -73,13 +73,15 @@ export const executeBuy = async (bestStock) => {
   const quantity = bestStock.quantity || POSITION_SIZE;
 
   try {
+    const orderType = bestStock.variety === 'amo' ? 'LIMIT' : 'MARKET';
     const orderResult = await placeOrder({
       tradingsymbol: symbol,
       transaction_type: 'BUY',
       quantity,
-      order_type: 'MARKET',
+      order_type: orderType,
       product: 'MIS',
-      variety: bestStock.variety || 'regular'
+      variety: bestStock.variety || 'regular',
+      price: orderType === 'LIMIT' ? entryPrice : undefined
     });
 
     // Update entry price from actual fill if available (paper uses lastPrice)
@@ -278,11 +280,19 @@ export const resetDailyState = () => {
  * Manual buy for testing (respects paper mode)
  */
 export const manualBuy = async (symbol, quantity, bypassTradeCheck = false, variety = 'regular') => {
+  let price = 1000;
+  try {
+    const quotes = await getQuotes([`NSE:${symbol.toUpperCase()}`]);
+    price = quotes[`NSE:${symbol.toUpperCase()}`]?.last_price || 1000;
+  } catch (err) {
+    logger.warn(`Failed to fetch quote for ${symbol}, using default 1000`, { error: err.message });
+  }
+
   // Simulate bestStock object
   const fakeBest = {
     symbol: symbol.toUpperCase(),
-    lastPrice: 1000, // Will be overwritten by real quote in executeBuy
-    openPrice: 1000,
+    lastPrice: price,
+    openPrice: price,
     quantity,
     bypassTradeCheck,
     variety
