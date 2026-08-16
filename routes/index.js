@@ -32,8 +32,20 @@ import {
   manualBuy,
   resetDailyState
 } from '../services/orderService.js';
+import { isWithinTradingWindow } from '../services/timeService.js';
 
 const router = express.Router();
+
+const checkTradingWindow = (req, res, next) => {
+  if (!isWithinTradingWindow()) {
+    return res.status(403).json({
+      error: 'Trading restricted',
+      message: 'Trading operations, strategy scans, and order executions are only allowed between 9:00 AM and 11:00 AM IST.'
+    });
+  }
+  next();
+};
+
 
 // === HEALTH & STATUS ===
 router.get('/health', (req, res) => {
@@ -126,7 +138,7 @@ router.post('/strategy/stocks', (req, res) => {
   }
 });
 
-router.get('/strategy/scan', async (req, res) => {
+router.get('/strategy/scan', checkTradingWindow, async (req, res) => {
   try {
     const decision = await selectBestStock();
     res.json(decision);
@@ -136,7 +148,7 @@ router.get('/strategy/scan', async (req, res) => {
 });
 
 // === TRADE CONTROL ===
-router.post('/trade/buy', async (req, res) => {
+router.post('/trade/buy', checkTradingWindow, async (req, res) => {
   try {
     const { symbol } = req.body;
     if (!symbol) return res.status(400).json({ error: 'symbol required' });
@@ -148,7 +160,7 @@ router.post('/trade/buy', async (req, res) => {
   }
 });
 
-router.post('/trade/sell', async (req, res) => {
+router.post('/trade/sell', checkTradingWindow, async (req, res) => {
   try {
     const result = await executeSell('MANUAL_SELL');
     res.json(result);
@@ -157,7 +169,7 @@ router.post('/trade/sell', async (req, res) => {
   }
 });
 
-router.post('/trade/emergency-square-off', async (req, res) => {
+router.post('/trade/emergency-square-off', checkTradingWindow, async (req, res) => {
   try {
     const result = await emergencySquareOff();
     res.json(result);
@@ -201,7 +213,7 @@ router.get('/dashboard/logs', (req, res) => {
   res.json({ logs: getLiveLogs() });
 });
 
-router.post('/dashboard/reset', (req, res) => {
+router.post('/dashboard/reset', checkTradingWindow, (req, res) => {
   resetDailyState();
   res.json({ success: true, message: 'Daily state reset' });
 });
@@ -221,7 +233,7 @@ router.post('/trade/mode', (req, res) => {
 });
 
 // === TEST MODE / DIAGNOSTICS ===
-router.post('/test/trigger-idea-buy', async (req, res) => {
+router.post('/test/trigger-idea-buy', checkTradingWindow, async (req, res) => {
   try {
     if (!isSessionActive()) {
       return res.status(400).json({ error: 'Kite session is not active. Please connect Zerodha first.' });

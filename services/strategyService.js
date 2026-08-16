@@ -9,6 +9,7 @@
  */
 
 import { getQuotes } from './kiteService.js';
+import { isWithinTradingWindow } from './timeService.js';
 import winston from 'winston';
 import dotenv from 'dotenv';
 
@@ -21,7 +22,7 @@ const logger = winston.createLogger({
 });
 
 const SCORE_THRESHOLD = parseFloat(process.env.SCORE_THRESHOLD) || 65;
-const MIN_VOLUME = 50000; // Minimum volume to consider (adjust based on stock)
+const MIN_VOLUME = 100000; // Increased minimum volume to 100,000 for safety
 
 // Expanded universe for better opportunities (25 high momentum/volatile NSE stocks)
 export let STOCK_UNIVERSE = [
@@ -57,6 +58,10 @@ const normalizeToScore = (value, min, max) => {
  * Called at exactly 9:15 AM by scheduler.
  */
 export const scanAndRankStocks = async () => {
+  if (!isWithinTradingWindow()) {
+    throw new Error('Trading operations and scans are restricted to 9:00 AM - 11:00 AM IST.');
+  }
+
   const instruments = STOCK_UNIVERSE.map(symbol => `NSE:${symbol}`);
   
   logger.info('Scanning stocks at market open...', { count: STOCK_UNIVERSE.length });
@@ -168,35 +173,69 @@ export const scanAndRankStocks = async () => {
  * Returns { bestStock, shouldTrade, reason }
  */
 export const selectBestStock = async () => {
+  if (!isWithinTradingWindow()) {
+    return {
+      bestStocks: [],
+      bestStock: null,
+      rankedStocks: [],
+      shouldTrade: false,
+      reason: 'Trading restricted: Outside 9:00 AM - 11:00 AM IST trading window.'
+    };
+  }
+
+  // 1. Check Nifty 50 Index Trend for safety (Avoid losing badly mode)
+  let niftyTrendSafe = true;
+  let niftyReason = '';
+  try {
+    const niftySymbol = 'NSE:NIFTY 50';
+    const quotes = await getQuotes([niftySymbol]);
+    const quote = quotes[niftySymbol];
+    if (quote && quote.ohlc && quote.ohlc.close > 0) {
+      const prevClose = quote.ohlc.close;
+      const lastPrice = quote.last_price || prevClose;
+      const changePercent = ((lastPrice - prevClose) / prevClose) * 100;
+      
+      const threshold = parseFloat(process.env.NIFTY_TREND_THRESHOLD_PCT) || -0.5;
+      if (changePercent < threshold) {
+        niftyTrendSafe = false;
+        niftyReason = `Market Downtrend safety check triggered: Nifty 50 is down ${changePercent.toFixed(2)}% (threshold ${threshold}%).`;
+      }
+    }
+  } catch (err) {
+    logger.warn('Failed to fetch Nifty 50 quote for safety check, continuing without check', { error: err.message });
+  }
+
   const ranked = await scanAndRankStocks();
   
   if (!ranked || ranked.length === 0) {
     return { bestStocks: [], shouldTrade: false, reason: 'No stocks scanned' };
   }
 
-  // Dark Arts: Select up to 2 best stocks for better profit potential with ₹5000 capital
+  // Select up to 2 best stocks for profit potential
   const topStocks = ranked.slice(0, 2);
   const best = topStocks[0];
 
   // Strict filters 
   const hasPositiveGap = best.gapPercent > 0;
   const hasPositiveMomentum = best.momentumPercent > 0;
-  const hasDecentVolume = best.rawVolume > MIN_VOLUME;
+  const hasDecentVolume = best.rawVolume >= MIN_VOLUME;
 
   let shouldTrade = false;
   let reason = '';
 
-  if (!hasPositiveGap) {
+  if (!niftyTrendSafe) {
+    reason = niftyReason;
+  } else if (!hasPositiveGap) {
     reason = `Gap negative (${best.gapPercent.toFixed(2)}%). No trade.`;
   } else if (!hasPositiveMomentum) {
     reason = `Momentum negative from open (${best.momentumPercent.toFixed(2)}%). No trade.`;
   } else if (!hasDecentVolume) {
-    reason = `Volume too low (${best.rawVolume}). No trade.`;
+    reason = `Volume too low (${best.rawVolume} < ${MIN_VOLUME}). No trade.`;
   } else if (best.finalScore < SCORE_THRESHOLD) {
     reason = `Best score ${best.finalScore} below threshold ${SCORE_THRESHOLD}. No trade.`;
   } else {
     shouldTrade = true;
-    reason = `Selected top ${topStocks.length} stocks for max profit (₹5000 capital)`;
+    reason = `Selected top ${topStocks.length} stocks for execution.`;
   }
 
   logger.info('Trade decision', { 

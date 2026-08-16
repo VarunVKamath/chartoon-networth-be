@@ -83,15 +83,15 @@ export const startSchedulers = () => {
     timezone: "Asia/Kolkata"
   });
 
-  // 10:00 AM IST - Force Exit (Time-based square off)
-  const exitJob = cron.schedule('0 10 * * *', async () => {
-    logger.info('=== 10:00 AM JOB TRIGGERED: Time-based exit ===');
+  // 10:55 AM IST - Force Exit (Time-based square off)
+  const exitJob = cron.schedule('55 10 * * *', async () => {
+    logger.info('=== 10:55 AM JOB TRIGGERED: Time-based exit ===');
     
     try {
       // executeSell will do nothing if no active position
-      const sellResult = await executeSell('TIME_EXIT_10AM');
+      const sellResult = await executeSell('TIME_EXIT_1055AM');
       if (sellResult.success) {
-        logger.info('Auto SELL at 10AM completed', { pnl: sellResult.trade?.pnl });
+        logger.info('Auto SELL at 10:55 AM completed', { pnl: sellResult.trade?.pnl });
       }
     } catch (error) {
       logger.error('Exit job failed', { error: error.message });
@@ -101,9 +101,9 @@ export const startSchedulers = () => {
     timezone: "Asia/Kolkata"
   });
 
-  // Optional: Reset daily state at 00:30 AM (helps if app runs 24/7)
-  const midnightReset = cron.schedule('30 0 * * *', () => {
-    logger.info('Midnight reset triggered');
+  // Reset daily state at 09:00 AM (start of trading window)
+  const midnightReset = cron.schedule('0 9 * * *', () => {
+    logger.info('Daily state reset triggered (09:00 AM)');
     resetDailyState();
   }, {
     scheduled: true,
@@ -111,7 +111,7 @@ export const startSchedulers = () => {
   });
 
   jobsStarted = true;
-  logger.info('All cron jobs scheduled successfully (9:15 AM, 10:00 AM, Midnight reset)');
+  logger.info('All cron jobs scheduled successfully (9:00 AM Reset, 9:15 AM Scan/Buy, 10:55 AM Exit)');
 
   // Return for testing/manual trigger if needed
   return { morningJob, exitJob, midnightReset };

@@ -14,6 +14,7 @@ import {
   getCurrentPaperPosition, 
   clearPaperPosition 
 } from './kiteService.js';
+import { isWithinTradingWindow } from './timeService.js';
 import winston from 'winston';
 import dotenv from 'dotenv';
 
@@ -27,13 +28,22 @@ const logger = winston.createLogger({
 
 const STOP_LOSS_PCT = parseFloat(process.env.STOP_LOSS_PERCENT) || 0.75;
 const TARGET_PCT = parseFloat(process.env.TARGET_PERCENT) || 1.5;
-const POSITION_SIZE = 50; // Number of shares. TODO: Make configurable per stock/risk
+const CAPITAL_POOL = parseFloat(process.env.CAPITAL_POOL) || 5000;
+const MAX_RISK_PCT = parseFloat(process.env.MAX_RISK_PERCENT) || 0.5; // risk 0.5% of capital (₹25 on ₹5000)
+const MAX_DAILY_LOSS_PCT = parseFloat(process.env.MAX_DAILY_LOSS_PERCENT) || 2.0; // max daily loss 2% (₹100 on ₹5000)
 
 // In-memory state (production: persist to DB/file)
 let currentTrade = null;        // Active position
 let tradeHistory = [];          // All past trades
 let lastTradeDate = null;       // Prevent multiple trades same day
 let monitorInterval = null;     // For SL/Target checking
+
+const getDailyLossPercent = () => {
+  const today = new Date().toISOString().split('T')[0];
+  const todaysTrades = tradeHistory.filter(t => t.sellTime && t.sellTime.startsWith(today));
+  const totalPnL = todaysTrades.reduce((sum, t) => sum + (t.pnl || 0), 0);
+  return (totalPnL < 0) ? (Math.abs(totalPnL) / CAPITAL_POOL) * 100 : 0;
+};
 
 const addLog = (message, level = 'info') => {
   const logEntry = { time: new Date().toISOString(), message, level };
@@ -57,9 +67,20 @@ export const canTradeToday = () => {
  * Stores entry details and starts SL/Target monitor.
  */
 export const executeBuy = async (bestStock) => {
+  if (!isWithinTradingWindow()) {
+    addLog('BUY rejected: Outside 9:00 AM - 11:00 AM IST trading window.', 'warn');
+    return { success: false, reason: 'Outside trading hours' };
+  }
+
   if (!bestStock.bypassTradeCheck && !canTradeToday()) {
     addLog('Trade already executed today. Skipping.', 'warn');
     return { success: false, reason: 'Already traded today' };
+  }
+
+  const dailyLossPct = getDailyLossPercent();
+  if (dailyLossPct >= MAX_DAILY_LOSS_PCT) {
+    addLog(`BUY rejected: Maximum daily loss limit exceeded (${dailyLossPct.toFixed(2)}% >= ${MAX_DAILY_LOSS_PCT}%).`, 'warn');
+    return { success: false, reason: 'Max daily loss limit exceeded' };
   }
 
   const { symbol, lastPrice, openPrice } = bestStock;
@@ -70,7 +91,22 @@ export const executeBuy = async (bestStock) => {
     return { success: false, reason: 'Invalid price' };
   }
 
-  const quantity = bestStock.quantity || POSITION_SIZE;
+  // Dynamic position sizing based on risk
+  const stopLossDistance = entryPrice * (STOP_LOSS_PCT / 100);
+  const maxRiskAmount = CAPITAL_POOL * (MAX_RISK_PCT / 100);
+  let quantity = Math.floor(maxRiskAmount / stopLossDistance);
+  
+  // Cap position size to stay within available capital
+  const maxBuyable = Math.floor(CAPITAL_POOL / entryPrice);
+  quantity = Math.min(quantity, maxBuyable);
+  
+  if (quantity <= 0) {
+    quantity = 1;
+  }
+
+  if (bestStock.quantity) {
+    quantity = bestStock.quantity;
+  }
 
   try {
     const orderType = bestStock.variety === 'amo' ? 'LIMIT' : 'MARKET';
@@ -126,6 +162,15 @@ const startPositionMonitor = () => {
 
   monitorInterval = setInterval(async () => {
     if (!currentTrade || currentTrade.status !== 'ACTIVE') {
+      clearInterval(monitorInterval);
+      monitorInterval = null;
+      return;
+    }
+
+    // Safety: Force exit if trading window has closed (passed 11:00 AM IST)
+    if (!isWithinTradingWindow()) {
+      addLog('Trading window closed. Forcing auto-exit of active position.', 'warn');
+      await executeSell('WINDOW_CLOSE_FORCE_EXIT');
       clearInterval(monitorInterval);
       monitorInterval = null;
       return;
