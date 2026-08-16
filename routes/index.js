@@ -20,7 +20,8 @@ import { sessionService } from '../services/sessionService.js';
 import { 
   selectBestStock, 
   getStockUniverse, 
-  updateStockUniverse 
+  updateStockUniverse,
+  getLatestScanDecision
 } from '../services/strategyService.js';
 import { 
   executeBuy, 
@@ -204,7 +205,9 @@ router.get('/dashboard/status', (req, res) => {
   res.json({
     status,
     currentTrade: trade,
-    mode: getRealTradingMode() ? 'REAL' : 'PAPER',
+    mode: 'PAPER',
+    startingCapital: 10000,
+    latestScanDecision: getLatestScanDecision(),
     lastUpdated: new Date().toISOString()
   });
 });
@@ -221,12 +224,11 @@ router.post('/dashboard/reset', checkTradingWindow, (req, res) => {
 router.post('/trade/mode', (req, res) => {
   try {
     const { mode } = req.body;
-    if (mode !== 'REAL' && mode !== 'PAPER') {
-      return res.status(400).json({ error: "Invalid mode. Must be 'REAL' or 'PAPER'" });
+    if (mode === 'REAL') {
+      return res.status(403).json({ error: "Real trading mode is disabled. Enforced to PAPER trading mode only." });
     }
-    const enabled = mode === 'REAL';
-    setRealTradingMode(enabled);
-    res.json({ success: true, mode: enabled ? 'REAL' : 'PAPER' });
+    setRealTradingMode(false);
+    res.json({ success: true, mode: 'PAPER' });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }

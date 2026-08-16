@@ -35,15 +35,7 @@ const logger = winston.createLogger({
 let kiteInstance = null;
 
 const loadTradingMode = () => {
-  try {
-    if (fs.existsSync(MODE_FILE)) {
-      const data = JSON.parse(fs.readFileSync(MODE_FILE, 'utf-8'));
-      return data.isRealTrading === true;
-    }
-  } catch (error) {
-    console.error(`[KiteService] Failed to load trading mode from file: ${error.message}`);
-  }
-  return process.env.REAL_TRADING === 'true';
+  return false; // Permanently lock to PAPER trading mode
 };
 
 const saveTradingMode = (isReal) => {
@@ -51,15 +43,15 @@ const saveTradingMode = (isReal) => {
     if (!fs.existsSync(STORAGE_DIR)) {
       fs.mkdirSync(STORAGE_DIR, { recursive: true });
     }
-    fs.writeFileSync(MODE_FILE, JSON.stringify({ isRealTrading: isReal }, null, 2), 'utf-8');
+    fs.writeFileSync(MODE_FILE, JSON.stringify({ isRealTrading: false }, null, 2), 'utf-8');
   } catch (error) {
     console.error(`[KiteService] Failed to save trading mode to file: ${error.message}`);
   }
 };
 
-let isRealTrading = loadTradingMode();
+let isRealTrading = false; // Locked to false
 
-export const getRealTradingMode = () => isRealTrading;
+export const getRealTradingMode = () => false;
 
 // In-memory current position for paper trading simulation
 let paperPosition = null;
@@ -375,7 +367,7 @@ export const getCurrentPaperPosition = () => paperPosition;
 export const clearPaperPosition = () => { paperPosition = null; };
 
 export const setRealTradingMode = (enabled) => {
-  isRealTrading = !!enabled;
-  saveTradingMode(isRealTrading);
-  logger.warn(`Real trading mode ${enabled ? 'ENABLED' : 'DISABLED'} at runtime and persisted`);
+  isRealTrading = false;
+  saveTradingMode(false);
+  logger.warn('Real trading mode request was denied. Enforced to PAPER mode exclusively.');
 };

@@ -45,6 +45,9 @@ export const updateStockUniverse = (newStocks) => {
 
 export const getStockUniverse = () => [...STOCK_UNIVERSE];
 
+let latestScanDecision = null;
+export const getLatestScanDecision = () => latestScanDecision;
+
 /**
  * Normalize a value to 0-100 scale based on array min/max
  */
@@ -174,6 +177,11 @@ export const scanAndRankStocks = async () => {
  */
 export const selectBestStock = async () => {
   if (!isWithinTradingWindow()) {
+    latestScanDecision = {
+      timestamp: new Date().toISOString(),
+      shouldTrade: false,
+      reason: 'Trading restricted: Outside 9:00 AM - 11:00 AM IST trading window.'
+    };
     return {
       bestStocks: [],
       bestStock: null,
@@ -183,9 +191,9 @@ export const selectBestStock = async () => {
     };
   }
 
-  // 1. Check Nifty 50 Index Trend for safety (Avoid losing badly mode)
   let niftyTrendSafe = true;
   let niftyReason = '';
+  let changePercent = 0;
   try {
     const niftySymbol = 'NSE:NIFTY 50';
     const quotes = await getQuotes([niftySymbol]);
@@ -193,7 +201,7 @@ export const selectBestStock = async () => {
     if (quote && quote.ohlc && quote.ohlc.close > 0) {
       const prevClose = quote.ohlc.close;
       const lastPrice = quote.last_price || prevClose;
-      const changePercent = ((lastPrice - prevClose) / prevClose) * 100;
+      changePercent = ((lastPrice - prevClose) / prevClose) * 100;
       
       const threshold = parseFloat(process.env.NIFTY_TREND_THRESHOLD_PCT) || -0.5;
       if (changePercent < threshold) {
@@ -208,6 +216,13 @@ export const selectBestStock = async () => {
   const ranked = await scanAndRankStocks();
   
   if (!ranked || ranked.length === 0) {
+    latestScanDecision = {
+      timestamp: new Date().toISOString(),
+      shouldTrade: false,
+      reason: 'No stocks scanned',
+      niftySafe: niftyTrendSafe,
+      niftyChangePct: changePercent
+    };
     return { bestStocks: [], shouldTrade: false, reason: 'No stocks scanned' };
   }
 
@@ -244,6 +259,24 @@ export const selectBestStock = async () => {
     reason, 
     topScore: best.finalScore 
   });
+
+  latestScanDecision = {
+    timestamp: new Date().toISOString(),
+    shouldTrade,
+    reason,
+    niftySafe: niftyTrendSafe,
+    niftyChangePct: changePercent,
+    niftyThreshold: parseFloat(process.env.NIFTY_TREND_THRESHOLD_PCT) || -0.5,
+    bestStock: best || null,
+    topStocks: topStocks || [],
+    hasPositiveGap,
+    hasPositiveMomentum,
+    hasDecentVolume,
+    volumeValue: best ? best.rawVolume : 0,
+    volumeThreshold: MIN_VOLUME,
+    finalScore: best ? best.finalScore : 0,
+    scoreThreshold: SCORE_THRESHOLD
+  };
 
   return {
     bestStocks: topStocks,   // Changed to support multi-stock

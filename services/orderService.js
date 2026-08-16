@@ -28,9 +28,9 @@ const logger = winston.createLogger({
 
 const STOP_LOSS_PCT = parseFloat(process.env.STOP_LOSS_PERCENT) || 0.75;
 const TARGET_PCT = parseFloat(process.env.TARGET_PERCENT) || 1.5;
-const CAPITAL_POOL = parseFloat(process.env.CAPITAL_POOL) || 5000;
-const MAX_RISK_PCT = parseFloat(process.env.MAX_RISK_PERCENT) || 0.5; // risk 0.5% of capital (₹25 on ₹5000)
-const MAX_DAILY_LOSS_PCT = parseFloat(process.env.MAX_DAILY_LOSS_PERCENT) || 2.0; // max daily loss 2% (₹100 on ₹5000)
+const CAPITAL_POOL = parseFloat(process.env.CAPITAL_POOL) || 10000;
+const MAX_RISK_PCT = parseFloat(process.env.MAX_RISK_PERCENT) || 0.5; // risk 0.5% of capital (₹50 on ₹10000)
+const MAX_DAILY_LOSS_PCT = parseFloat(process.env.MAX_DAILY_LOSS_PERCENT) || 2.0; // max daily loss 2% (₹200 on ₹10000)
 
 // In-memory state (production: persist to DB/file)
 let currentTrade = null;        // Active position
