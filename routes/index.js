@@ -31,9 +31,14 @@ import {
   getTradeHistory, 
   getLiveLogs,
   manualBuy,
-  resetDailyState
+  resetDailyState,
+  getOperatingMode,
+  setOperatingMode,
+  getEarlyEdgeSettings,
+  updateEarlyEdgeSettings,
+  getWhatIfData
 } from '../services/orderService.js';
-import { isWithinTradingWindow } from '../services/timeService.js';
+import { isWithinTradingWindow, isActiveWindow } from '../services/timeService.js';
 import { 
   getWatchlist, 
   updateWatchlist, 
@@ -47,8 +52,8 @@ import {
 
 const router = express.Router();
 
-// Middleware to temporarily disable all API endpoints except Kite authentication/connection
-const disableNonAuthAPIs = (req, res, next) => {
+// Middleware to enforce read-only mode outside active hours (8:45 AM - 10:15 AM IST)
+const enforceActiveHoursOrReadOnly = (req, res, next) => {
   const allowedPaths = [
     '/health',
     '/auth/login-url',
@@ -56,37 +61,42 @@ const disableNonAuthAPIs = (req, res, next) => {
     '/auth/login',
     '/auth/callback',
     '/auth/status',
-    '/auth/logout',
-    '/api/health',
-    '/api/auth/login-url',
-    '/api/auth/generate-session',
-    '/api/auth/login',
-    '/api/auth/callback',
-    '/api/auth/status',
-    '/api/auth/logout'
+    '/auth/logout'
   ];
 
   const pathToCheck = req.path;
-  const originalPathToCheck = req.originalUrl.split('?')[0];
-
-  if (allowedPaths.includes(pathToCheck) || allowedPaths.includes(originalPathToCheck)) {
+  if (allowedPaths.includes(pathToCheck)) {
     return next();
   }
 
-  return res.status(503).json({
-    error: 'API_TEMPORARILY_DISABLED',
-    message: 'All API calls are temporarily disabled except connecting with Kite API.'
-  });
+  // Allow setting simulated time for testing & simulator requests
+  if (pathToCheck === '/early-edge/simulate' || pathToCheck === '/early-edge/scanner' || pathToCheck === '/early-edge/chart') {
+    return next();
+  }
+
+  if (pathToCheck === '/trade/mode') {
+    return next(); // Allow updating trading mode settings
+  }
+
+  if (!isActiveWindow()) {
+    const isWrite = ['POST', 'PUT', 'DELETE'].includes(req.method);
+    if (isWrite) {
+      return res.status(403).json({
+        error: 'READ_ONLY_MODE',
+        message: 'All trading and strategy actions are read-only outside active hours (8:45 AM - 10:15 AM IST).'
+      });
+    }
+  }
+  next();
 };
 
-router.use(disableNonAuthAPIs);
-
+router.use(enforceActiveHoursOrReadOnly);
 
 const checkTradingWindow = (req, res, next) => {
-  if (!isWithinTradingWindow()) {
+  if (!isActiveWindow()) {
     return res.status(403).json({
       error: 'Trading restricted',
-      message: 'Trading operations, strategy scans, and order executions are only allowed between 9:00 AM and 11:00 AM IST.'
+      message: 'Trading operations, strategy scans, and order executions are only allowed during active hours (8:45 AM - 10:15 AM IST).'
     });
   }
   next();
@@ -274,6 +284,55 @@ router.post('/trade/mode', (req, res) => {
     }
     setRealTradingMode(false);
     res.json({ success: true, mode: 'PAPER' });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get persistent operating mode (TEST or PROD)
+router.get('/early-edge/mode', (req, res) => {
+  try {
+    res.json({ success: true, mode: getOperatingMode() });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Update operating mode
+router.post('/early-edge/mode', (req, res) => {
+  try {
+    const { mode } = req.body;
+    const updated = setOperatingMode(mode);
+    res.json({ success: true, mode: updated });
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+// Get strategy settings (capital limits, stop-loss, slippage, etc.)
+router.get('/early-edge/settings', (req, res) => {
+  try {
+    res.json({ success: true, settings: getEarlyEdgeSettings() });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Update strategy settings
+router.post('/early-edge/settings', (req, res) => {
+  try {
+    const settings = req.body;
+    const updated = updateEarlyEdgeSettings(settings);
+    res.json({ success: true, settings: updated });
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+// Get post-trade what-if comparison results
+router.get('/early-edge/what-if', (req, res) => {
+  try {
+    res.json({ success: true, whatIf: getWhatIfData() });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }

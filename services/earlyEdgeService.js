@@ -9,8 +9,17 @@
  */
 
 import { getQuotes } from './kiteService.js';
-import { getISTTime } from './timeService.js';
+import { 
+  getISTTime, 
+  setSimulatedTime as setSimTime, 
+  getSimulatedTime as getSimTime, 
+  getActiveISTTime as getActiveTime,
+  isActiveWindow
+} from './timeService.js';
 import winston from 'winston';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
 
 const logger = winston.createLogger({
   level: 'info',
@@ -18,11 +27,38 @@ const logger = winston.createLogger({
   transports: [new winston.transports.Console()]
 });
 
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const STORAGE_DIR = path.join(__dirname, '../storage');
+const SCANNER_CACHE_FILE = path.join(STORAGE_DIR, 'last_scanner_results.json');
+
+let lastScannerResults = [];
+
+const loadScannerCache = () => {
+  try {
+    if (fs.existsSync(SCANNER_CACHE_FILE)) {
+      lastScannerResults = JSON.parse(fs.readFileSync(SCANNER_CACHE_FILE, 'utf-8'));
+    }
+  } catch (err) {
+    // Ignore cache load error
+  }
+};
+loadScannerCache();
+
+const saveScannerCache = (results) => {
+  lastScannerResults = results;
+  try {
+    if (!fs.existsSync(STORAGE_DIR)) {
+      fs.mkdirSync(STORAGE_DIR, { recursive: true });
+    }
+    fs.writeFileSync(SCANNER_CACHE_FILE, JSON.stringify(lastScannerResults, null, 2), 'utf-8');
+  } catch (err) {
+    // Ignore cache save error
+  }
+};
+
 // Personal watchlist in-memory store (defaults to stock universe)
 let customWatchlist = ["RELIANCE", "TCS", "INFY", "HDFCBANK", "ICICIBANK", "SBIN", "LT", "TATAMOTORS", "TATASTEEL", "WIPRO"];
-
-// Simulated time (if null, uses actual time)
-let simulatedTime = null;
 
 // Lock store for Opening Range to avoid recalculating once locked at 9:30 AM
 const openingRangeLockStore = new Map(); // Key: 'YYYY-MM-DD:SYMBOL', Value: { high, low, locked: true }
@@ -45,38 +81,18 @@ export const updateWatchlist = (stocks) => {
  * Set Simulated Time (HH:MM:SS) or null to use live time
  */
 export const setSimulatedTime = (timeStr) => {
-  if (!timeStr) {
-    simulatedTime = null;
-    logger.info('Simulated time cleared. Using live time.');
-    return { success: true, simulatedTime: null };
-  }
-  // Validate format HH:MM:SS or HH:MM
-  if (!/^([0-9]|0[0-9]|1[0-9]|2[0-3]):[0-5][0-9](:[0-5][0-9])?$/.test(timeStr)) {
-    throw new Error('Invalid time format. Must be HH:MM:SS or HH:MM');
-  }
-  simulatedTime = timeStr;
-  logger.info(`Simulated time set to ${simulatedTime}`);
-  return { success: true, simulatedTime };
+  return setSimTime(timeStr);
 };
 
-export const getSimulatedTime = () => simulatedTime;
+export const getSimulatedTime = () => getSimTime();
 
 /**
  * Get Current Active Time in IST (taking simulation into account)
  */
 export const getActiveISTTime = () => {
-  const now = getISTTime();
-  if (simulatedTime) {
-    const parts = simulatedTime.split(':');
-    const simDate = new Date(now);
-    simDate.setHours(parseInt(parts[0], 10));
-    simDate.setMinutes(parseInt(parts[1], 10));
-    simDate.setSeconds(parts[2] ? parseInt(parts[2], 10) : 0);
-    simDate.setMilliseconds(0);
-    return simDate;
-  }
-  return now;
+  return getActiveTime();
 };
+
 
 /**
  * Deterministic Pseudo-Random Number Generator (PRNG)
@@ -486,6 +502,12 @@ export const runScanner = async (simTimeOverride = null) => {
   const activeTime = simTimeOverride ? new Date(simTimeOverride) : getActiveISTTime();
   const dateStr = activeTime.toISOString().split('T')[0];
 
+  // Outside active window check: return cached results
+  if (!isActiveWindow() && !simTimeOverride) {
+    logger.info('[Scanner] Outside active window, returning cached rankings.');
+    return lastScannerResults;
+  }
+
   // We need Nifty index candles first for RS scoring
   const niftyCandles = await getCandleData('NIFTY50', activeTime, true);
 
@@ -513,6 +535,9 @@ export const runScanner = async (simTimeOverride = null) => {
 
   // Sort by score descending
   scanResults.sort((a, b) => b.score - a.score);
+
+  // Cache the fresh results
+  saveScannerCache(scanResults);
 
   // Broadcast results via socket.io
   if (global.io) {

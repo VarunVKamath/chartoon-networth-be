@@ -12,11 +12,15 @@ import {
   placeOrder, 
   getQuotes, 
   getCurrentPaperPosition, 
-  clearPaperPosition 
+  clearPaperPosition,
+  getAvailableCash
 } from './kiteService.js';
-import { isWithinTradingWindow } from './timeService.js';
+import { isWithinTradingWindow, isActiveWindow } from './timeService.js';
 import winston from 'winston';
 import dotenv from 'dotenv';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
 
 dotenv.config();
 
@@ -26,11 +30,81 @@ const logger = winston.createLogger({
   transports: [new winston.transports.Console()]
 });
 
-const STOP_LOSS_PCT = parseFloat(process.env.STOP_LOSS_PERCENT) || 0.75;
-const TARGET_PCT = parseFloat(process.env.TARGET_PERCENT) || 1.5;
-const CAPITAL_POOL = parseFloat(process.env.CAPITAL_POOL) || 10000;
-const MAX_RISK_PCT = parseFloat(process.env.MAX_RISK_PERCENT) || 0.5; // risk 0.5% of capital (₹50 on ₹10000)
-const MAX_DAILY_LOSS_PCT = parseFloat(process.env.MAX_DAILY_LOSS_PERCENT) || 2.0; // max daily loss 2% (₹200 on ₹10000)
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const STORAGE_DIR = path.join(__dirname, '../storage');
+const SETTINGS_FILE = path.join(STORAGE_DIR, 'early_edge_settings.json');
+const WHAT_IF_FILE = path.join(STORAGE_DIR, 'what_if_analysis.json');
+
+// Configurable Settings with persistence
+let earlyEdgeSettings = {
+  operatingMode: 'TEST',       // 'TEST' or 'PROD'
+  stopLossPct: 0.75,          // mandatory stop loss %
+  targetPct: 1.5,             // target move (1.5%)
+  capitalPool: 10000,         // starting mock capital pool
+  maxCapitalRisk: 500,        // max capital at risk per trade
+  dailyMaxLossLimit: 2.0,     // daily maximum loss limit % (2% of capital)
+  slippagePct: 0.2,           // slippage buffer % (0.2% by default)
+  minLiquidityVolume: 100000, // minimum volume required in 9:15-9:30 range
+  maxTradesPerDay: 1          // strict trade count limit per day
+};
+
+const loadSettings = () => {
+  try {
+    if (fs.existsSync(SETTINGS_FILE)) {
+      const data = JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf-8'));
+      earlyEdgeSettings = { ...earlyEdgeSettings, ...data };
+      logger.info('Loaded early edge settings from file', earlyEdgeSettings);
+    }
+  } catch (err) {
+    logger.error('Failed to load settings', err);
+  }
+};
+loadSettings();
+
+const saveSettings = () => {
+  try {
+    if (!fs.existsSync(STORAGE_DIR)) {
+      fs.mkdirSync(STORAGE_DIR, { recursive: true });
+    }
+    fs.writeFileSync(SETTINGS_FILE, JSON.stringify(earlyEdgeSettings, null, 2), 'utf-8');
+  } catch (err) {
+    logger.error('Failed to save settings', err);
+  }
+};
+
+let whatIfData = null;
+
+const loadWhatIfData = () => {
+  try {
+    if (fs.existsSync(WHAT_IF_FILE)) {
+      whatIfData = JSON.parse(fs.readFileSync(WHAT_IF_FILE, 'utf-8'));
+    }
+  } catch (err) {
+    logger.error('Failed to load what-if data', err);
+  }
+};
+loadWhatIfData();
+
+export const getWhatIfData = () => whatIfData;
+
+export const saveWhatIfData = (data) => {
+  whatIfData = data;
+  try {
+    if (!fs.existsSync(STORAGE_DIR)) {
+      fs.mkdirSync(STORAGE_DIR, { recursive: true });
+    }
+    fs.writeFileSync(WHAT_IF_FILE, JSON.stringify(whatIfData, null, 2), 'utf-8');
+  } catch (err) {
+    logger.error('Failed to save what-if data', err);
+  }
+};
+
+const STOP_LOSS_PCT = earlyEdgeSettings.stopLossPct;
+const TARGET_PCT = earlyEdgeSettings.targetPct;
+const CAPITAL_POOL = earlyEdgeSettings.capitalPool;
+const MAX_RISK_PCT = 0.5; // risk fallback
+const MAX_DAILY_LOSS_PCT = earlyEdgeSettings.dailyMaxLossLimit;
 
 // In-memory state (production: persist to DB/file)
 let currentTrade = null;        // Active position
@@ -67,8 +141,8 @@ export const canTradeToday = () => {
  * Stores entry details and starts SL/Target monitor.
  */
 export const executeBuy = async (bestStock) => {
-  if (!isWithinTradingWindow()) {
-    addLog('BUY rejected: Outside 9:00 AM - 11:00 AM IST trading window.', 'warn');
+  if (!isActiveWindow()) {
+    addLog('BUY rejected: Outside 8:45 AM - 10:15 AM IST active trading window.', 'warn');
     return { success: false, reason: 'Outside trading hours' };
   }
 
@@ -78,8 +152,8 @@ export const executeBuy = async (bestStock) => {
   }
 
   const dailyLossPct = getDailyLossPercent();
-  if (dailyLossPct >= MAX_DAILY_LOSS_PCT) {
-    addLog(`BUY rejected: Maximum daily loss limit exceeded (${dailyLossPct.toFixed(2)}% >= ${MAX_DAILY_LOSS_PCT}%).`, 'warn');
+  if (dailyLossPct >= earlyEdgeSettings.dailyMaxLossLimit) {
+    addLog(`BUY rejected: Maximum daily loss limit exceeded (${dailyLossPct.toFixed(2)}% >= ${earlyEdgeSettings.dailyMaxLossLimit}%).`, 'warn');
     return { success: false, reason: 'Max daily loss limit exceeded' };
   }
 
@@ -91,25 +165,28 @@ export const executeBuy = async (bestStock) => {
     return { success: false, reason: 'Invalid price' };
   }
 
-  // Dynamic position sizing based on risk
-  const stopLossDistance = entryPrice * (STOP_LOSS_PCT / 100);
-  const maxRiskAmount = CAPITAL_POOL * (MAX_RISK_PCT / 100);
-  let quantity = Math.floor(maxRiskAmount / stopLossDistance);
-  
-  // Cap position size to stay within available capital
-  const maxBuyable = Math.floor(CAPITAL_POOL / entryPrice);
-  quantity = Math.min(quantity, maxBuyable);
-  
-  if (quantity <= 0) {
-    quantity = 1;
-  }
-
-  if (bestStock.quantity) {
-    quantity = bestStock.quantity;
+  let quantity = bestStock.quantity;
+  if (!quantity) {
+    // Dynamic position sizing based on risk
+    const stopLossDistance = entryPrice * (earlyEdgeSettings.stopLossPct / 100);
+    const maxRiskAmount = CAPITAL_POOL * (MAX_RISK_PCT / 100);
+    quantity = Math.floor(maxRiskAmount / stopLossDistance);
+    
+    // Cap position size to stay within available capital
+    const maxBuyable = Math.floor(CAPITAL_POOL / entryPrice);
+    quantity = Math.min(quantity, maxBuyable);
+    
+    if (quantity <= 0) {
+      quantity = 1;
+    }
   }
 
   try {
     const orderType = bestStock.variety === 'amo' ? 'LIMIT' : 'MARKET';
+    
+    // Apply slippage buffer to the order price if limit order
+    const orderPrice = orderType === 'LIMIT' ? entryPrice * (1 + earlyEdgeSettings.slippagePct / 100) : undefined;
+
     const orderResult = await placeOrder({
       tradingsymbol: symbol,
       transaction_type: 'BUY',
@@ -117,7 +194,7 @@ export const executeBuy = async (bestStock) => {
       order_type: orderType,
       product: 'MIS',
       variety: bestStock.variety || 'regular',
-      price: orderType === 'LIMIT' ? entryPrice : undefined
+      price: orderPrice
     });
 
     // Update entry price from actual fill if available (paper uses lastPrice)
@@ -130,14 +207,14 @@ export const executeBuy = async (bestStock) => {
       buyTime: new Date().toISOString(),
       orderId: orderResult.order_id,
       status: 'ACTIVE',
-      stopLossPrice: actualEntry * (1 - STOP_LOSS_PCT / 100),
-      targetPrice: actualEntry * (1 + TARGET_PCT / 100),
+      stopLossPrice: actualEntry * (1 - earlyEdgeSettings.stopLossPct / 100),
+      targetPrice: actualEntry * (1 + earlyEdgeSettings.targetPct / 100),
       isPaper: orderResult.is_paper || false
     };
 
     lastTradeDate = new Date().toISOString().split('T')[0];
 
-    addLog(`BUY executed: ${symbol} @ ₹${actualEntry.toFixed(2)} | Qty: ${quantity} | SL: ₹${currentTrade.stopLossPrice.toFixed(2)} | Target: ₹${currentTrade.targetPrice.toFixed(2)}`);
+    addLog(`[Audit Log] BUY executed: ${symbol} @ ₹${actualEntry.toFixed(2)} | Qty: ${quantity} | SL: ₹${currentTrade.stopLossPrice.toFixed(2)} | Target: ₹${currentTrade.targetPrice.toFixed(2)}`);
 
     // Start monitoring for SL/Target
     startPositionMonitor();
@@ -148,7 +225,7 @@ export const executeBuy = async (bestStock) => {
       order: orderResult 
     };
   } catch (error) {
-    addLog(`BUY failed for ${symbol}: ${error.message}`, 'error');
+    addLog(`[Audit Log] BUY failed for ${symbol}: ${error.message}`, 'error');
     return { success: false, reason: error.message };
   }
 };
@@ -258,7 +335,40 @@ export const executeSell = async (reason = 'TIME_EXIT', exitPriceOverride = null
     tradeHistory.unshift(completedTrade); // Latest first
     if (tradeHistory.length > 50) tradeHistory.pop(); // Keep last 50
 
-    addLog(`SELL executed (${reason}): ${symbol} @ ₹${actualExit.toFixed(2)} | PnL: ₹${pnl.toFixed(2)} (${pnlPercent.toFixed(2)}%)`);
+    addLog(`[Audit Log] SELL executed (${reason}): ${symbol} @ ₹${actualExit.toFixed(2)} | PnL: ₹${pnl.toFixed(2)} (${pnlPercent.toFixed(2)}%)`);
+
+    // Update What-If hypothetical trades exit prices if they exist
+    if (whatIfData && whatIfData.hypotheticalTrades) {
+      try {
+        const symbolsToFetch = whatIfData.hypotheticalTrades.map(t => `NSE:${t.symbol}`);
+        if (symbolsToFetch.length > 0) {
+          const quotes = await getQuotes(symbolsToFetch);
+          whatIfData.hypotheticalTrades = whatIfData.hypotheticalTrades.map(cand => {
+            const quote = quotes[`NSE:${cand.symbol}`];
+            const exitP = quote?.last_price || cand.entryPrice;
+            const hypPnL = (exitP - cand.entryPrice) * cand.quantity;
+            const hypPnLPercent = ((exitP - cand.entryPrice) / cand.entryPrice) * 100;
+            return {
+              ...cand,
+              exitPrice: parseFloat(exitP.toFixed(2)),
+              pnl: parseFloat(hypPnL.toFixed(2)),
+              pnlPercent: parseFloat(hypPnLPercent.toFixed(2))
+            };
+          });
+          
+          if (whatIfData.actualTrade && whatIfData.actualTrade.symbol === symbol) {
+            whatIfData.actualTrade.exitPrice = actualExit;
+            whatIfData.actualTrade.pnl = completedTrade.pnl;
+            whatIfData.actualTrade.pnlPercent = completedTrade.pnlPercent;
+          }
+          
+          saveWhatIfData(whatIfData);
+          addLog(`[Audit Log] What-If analysis updated for completed trade on ${symbol}.`);
+        }
+      } catch (err) {
+        logger.error('Failed to update what-if exit prices', err);
+      }
+    }
 
     // Cleanup
     currentTrade = null;
@@ -270,7 +380,7 @@ export const executeSell = async (reason = 'TIME_EXIT', exitPriceOverride = null
 
     return { success: true, trade: completedTrade };
   } catch (error) {
-    addLog(`SELL failed: ${error.message}`, 'error');
+    addLog(`[Audit Log] SELL failed: ${error.message}`, 'error');
     return { success: false, reason: error.message };
   }
 };
@@ -343,4 +453,163 @@ export const manualBuy = async (symbol, quantity, bypassTradeCheck = false, vari
     variety
   };
   return executeBuy(fakeBest);
+};
+
+export const getOperatingMode = () => earlyEdgeSettings.operatingMode;
+export const setOperatingMode = (mode) => {
+  if (mode !== 'TEST' && mode !== 'PROD') {
+    throw new Error('Mode must be TEST or PROD');
+  }
+  earlyEdgeSettings.operatingMode = mode;
+  saveSettings();
+  addLog(`Operating mode switched to ${mode}`);
+  return earlyEdgeSettings.operatingMode;
+};
+
+export const getEarlyEdgeSettings = () => ({ ...earlyEdgeSettings });
+export const updateEarlyEdgeSettings = (newSettings) => {
+  earlyEdgeSettings = { ...earlyEdgeSettings, ...newSettings };
+  saveSettings();
+  addLog(`Early edge settings updated`);
+  return earlyEdgeSettings;
+};
+
+/**
+ * Execute early-morning trade from ranked scanner list
+ */
+export const executeMorningTrade = async (rankedStocks) => {
+  if (!isActiveWindow()) {
+    addLog('[Audit Log] Execute morning trade rejected: Outside 8:45 AM - 10:15 AM active window.', 'warn');
+    return { success: false, reason: 'Outside active trading hours' };
+  }
+  if (!canTradeToday()) {
+    addLog('[Audit Log] Execute morning trade skipped: Trade already executed today.');
+    return { success: false, reason: 'Already traded today' };
+  }
+
+  const dailyLossPct = getDailyLossPercent();
+  if (dailyLossPct >= earlyEdgeSettings.dailyMaxLossLimit) {
+    addLog(`[Audit Log] Morning trade rejected: Daily loss limit hit (${dailyLossPct.toFixed(2)}%).`);
+    return { success: false, reason: 'Daily loss limit hit' };
+  }
+
+  // Get available cash
+  const availableCash = await getAvailableCash();
+  addLog(`[Audit Log] Starting 9:30 AM execution. Available cash: ₹${availableCash.toFixed(2)} | Mode: ${earlyEdgeSettings.operatingMode}`);
+
+  let purchasedStock = null;
+  let purchasedQty = 0;
+  let purchasePrice = 0;
+  let errorReason = '';
+
+  for (const stock of rankedStocks) {
+    const symbol = stock.symbol;
+    const price = stock.price || stock.lastPrice;
+
+    if (!price || price <= 0) {
+      addLog(`[Audit Log] Skipping ${symbol}: Invalid price (₹${price})`, 'warn');
+      continue;
+    }
+
+    // Liquidity check: Minimum volume filter
+    if (stock.volume && stock.volume < earlyEdgeSettings.minLiquidityVolume) {
+      addLog(`[Audit Log] Risk Check: Skipping ${symbol} | Low liquidity (volume ${stock.volume} < ${earlyEdgeSettings.minLiquidityVolume}).`);
+      continue;
+    }
+
+    // Circuit limit check: Avoid stocks up/down >= 9.0% from open/prevClose
+    const changePct = stock.gapPercent || 0;
+    if (Math.abs(changePct) >= 9.0) {
+      addLog(`[Audit Log] Risk Check: Skipping ${symbol} | Near circuit limit (change ${changePct.toFixed(2)}% >= 9.0%).`);
+      continue;
+    }
+
+    // Quantity logic based on mode
+    let qty = 0;
+    if (earlyEdgeSettings.operatingMode === 'TEST') {
+      qty = 1;
+    } else {
+      // Prod Mode: Buy max whole number of shares possible
+      // Include slippage adjusted price
+      const priceWithSlippage = price * (1 + earlyEdgeSettings.slippagePct / 100);
+      qty = Math.floor(availableCash / priceWithSlippage);
+    }
+
+    if (qty <= 0) {
+      addLog(`[Audit Log] Affordability Check: Skipping ${symbol} | Cost (₹${price.toFixed(2)}) exceeds available cash (₹${availableCash.toFixed(2)}).`);
+      continue;
+    }
+
+    const priceWithSlippage = price * (1 + earlyEdgeSettings.slippagePct / 100);
+    const totalCost = qty * priceWithSlippage;
+
+    if (totalCost > availableCash) {
+      addLog(`[Audit Log] Affordability Check: Skipping ${symbol} | Total cost (₹${totalCost.toFixed(2)}) exceeds available cash (₹${availableCash.toFixed(2)}).`);
+      continue;
+    }
+
+    // Attempt purchase
+    addLog(`[Audit Log] Executing buy for ${symbol} | Qty: ${qty} | Estimated price (with slippage): ₹${priceWithSlippage.toFixed(2)}`);
+    
+    const buyResult = await executeBuy({
+      symbol,
+      lastPrice: price,
+      openPrice: price,
+      quantity: qty,
+      bypassTradeCheck: true
+    });
+
+    if (buyResult.success) {
+      purchasedStock = symbol;
+      purchasedQty = qty;
+      purchasePrice = buyResult.trade.entryPrice;
+      
+      // Store What-If Candidates (next 4 ranked stocks)
+      const startIndex = rankedStocks.findIndex(s => s.symbol === symbol) + 1;
+      const candidates = rankedStocks.slice(startIndex, startIndex + 4);
+      const whatIfCandidates = [];
+      
+      for (const cand of candidates) {
+        const candPrice = cand.price || cand.lastPrice;
+        let candQty = 1;
+        if (earlyEdgeSettings.operatingMode === 'PROD') {
+          candQty = Math.floor(availableCash / (candPrice * (1 + earlyEdgeSettings.slippagePct / 100)));
+        }
+        whatIfCandidates.push({
+          symbol: cand.symbol,
+          entryPrice: candPrice,
+          quantity: candQty,
+          exitPrice: null,
+          pnl: null,
+          pnlPercent: null
+        });
+      }
+
+      saveWhatIfData({
+        tradeDate: new Date().toISOString().split('T')[0],
+        actualTrade: {
+          symbol: symbol,
+          entryPrice: purchasePrice,
+          quantity: qty,
+          exitPrice: null,
+          pnl: null,
+          pnlPercent: null
+        },
+        hypotheticalTrades: whatIfCandidates
+      });
+
+      break; // Successfully placed 1 trade for the day
+    } else {
+      errorReason = buyResult.reason;
+      addLog(`[Audit Log] Order execution failed for ${symbol}: ${buyResult.reason}. Cascading to next ranked stock...`, 'error');
+    }
+  }
+
+  if (purchasedStock) {
+    return { success: true, symbol: purchasedStock, qty: purchasedQty, price: purchasePrice };
+  } else {
+    const finalReason = errorReason || 'No affordable compliant stock found';
+    addLog(`[Audit Log] Morning trade execution ended. No trade placed. Reason: ${finalReason}`, 'warn');
+    return { success: false, reason: finalReason };
+  }
 };

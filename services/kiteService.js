@@ -366,6 +366,24 @@ export const squareOffPosition = async (symbol, quantity) => {
 export const getCurrentPaperPosition = () => paperPosition;
 export const clearPaperPosition = () => { paperPosition = null; };
 
+export const getAvailableCash = async () => {
+  if (!isSessionActive()) {
+    return parseFloat(process.env.CAPITAL_POOL) || 10000;
+  }
+  try {
+    const kite = getKiteInstance();
+    const margins = await kite.getMargins();
+    const cash = margins?.equity?.available?.cash || margins?.equity?.net;
+    if (cash !== undefined && cash !== null) {
+      return parseFloat(cash);
+    }
+    return parseFloat(process.env.CAPITAL_POOL) || 10000;
+  } catch (error) {
+    logger.warn('[KiteService] Failed to fetch margins from Zerodha, using fallback capital pool', { error: error.message });
+    return parseFloat(process.env.CAPITAL_POOL) || 10000;
+  }
+};
+
 export const setRealTradingMode = (enabled) => {
   isRealTrading = false;
   saveTradingMode(false);

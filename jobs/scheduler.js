@@ -1,22 +1,22 @@
 /**
  * Scheduler (node-cron)
- * Runs the automated strategy at precise market times.
- * - 09:15 AM IST → Stock scan + auto BUY if qualifies
- * - 10:00 AM IST → Force SELL (time-based exit)
+ * Runs the automated early-morning strategy at precise market times.
+ * - 08:45 AM IST → Reset daily state
+ * - 09:00 AM - 09:30 AM IST → Run continuous stock scanner (every 2 minutes)
+ * - 09:30 AM IST → Auto BUY selected top ranked stock
+ * - 09:45 AM IST → Force exit / square off active position
  * 
- * Only one trade per day enforced in orderService.
- * Timezone set to Asia/Kolkata via env or cron options.
+ * Timezone set to Asia/Kolkata.
  */
 
 import cron from 'node-cron';
-import { selectBestStock } from '../services/strategyService.js';
+import { runScanner } from '../services/earlyEdgeService.js';
 import { 
-  executeBuy, 
   executeSell, 
   resetDailyState,
+  executeMorningTrade,
   canTradeToday 
 } from '../services/orderService.js';
-import { sessionService } from '../services/sessionService.js';
 import winston from 'winston';
 
 const logger = winston.createLogger({
@@ -33,96 +33,89 @@ export const startSchedulers = () => {
     return;
   }
 
-  logger.warn('[Scheduler] Schedulers are temporarily disabled. Only Kite API connection is allowed.');
-  jobsStarted = true;
-  return {};
+  logger.info('[Scheduler] Starting early morning trading schedulers...');
 
-
-  // 9:15 AM IST - Market Open Scanner + Auto Buy
-  const morningJob = cron.schedule('15 9 * * *', async () => {
-    logger.info('=== 9:15 AM JOB TRIGGERED: Starting stock scan ===');
-    
-    if (!sessionService.isConnected()) {
-      logger.error('Strategy execution disabled: Zerodha session is not active.');
-      if (!global.liveLogs) global.liveLogs = [];
-      global.liveLogs.push({
-        time: new Date().toISOString(),
-        message: 'Strategy execution failed: Zerodha session is not active. Please reconnect.',
-        level: 'error'
-      });
-      return;
-    }
-
-    if (!canTradeToday()) {
-      logger.info('Trade already done today. Skipping morning scan.');
-      return;
-    }
-
-    try {
-      const decision = await selectBestStock();
-      
-      // Log top 3 for dashboard visibility
-      if (decision.rankedStocks) {
-        decision.rankedStocks.slice(0, 3).forEach((stock, idx) => {
-          logger.info(`Rank #${idx + 1}: ${stock.symbol} | Score: ${stock.finalScore} | Gap: ${stock.gapPercent.toFixed(2)}% | Momentum: ${stock.momentumPercent.toFixed(2)}%`);
-        });
-      }
-
-      if (decision.shouldTrade && decision.bestStock) {
-        logger.info(`Selected ${decision.bestStock.symbol} for auto BUY`);
-        const buyResult = await executeBuy(decision.bestStock);
-        
-        if (buyResult.success) {
-          logger.info('Auto BUY successful', { trade: buyResult.trade });
-        } else {
-          logger.warn('Auto BUY failed', { reason: buyResult.reason });
-        }
-      } else {
-        logger.info(`No trade today. Reason: ${decision.reason}`);
-      }
-    } catch (error) {
-      logger.error('Morning job failed', { error: error.message });
-    }
-  }, {
-    scheduled: true,
-    timezone: "Asia/Kolkata"
-  });
-
-  // 10:55 AM IST - Force Exit (Time-based square off)
-  const exitJob = cron.schedule('55 10 * * *', async () => {
-    logger.info('=== 10:55 AM JOB TRIGGERED: Time-based exit ===');
-    
-    try {
-      // executeSell will do nothing if no active position
-      const sellResult = await executeSell('TIME_EXIT_1055AM');
-      if (sellResult.success) {
-        logger.info('Auto SELL at 10:55 AM completed', { pnl: sellResult.trade?.pnl });
-      }
-    } catch (error) {
-      logger.error('Exit job failed', { error: error.message });
-    }
-  }, {
-    scheduled: true,
-    timezone: "Asia/Kolkata"
-  });
-
-  // Reset daily state at 09:00 AM (start of trading window)
-  const midnightReset = cron.schedule('0 9 * * *', () => {
-    logger.info('Daily state reset triggered (09:00 AM)');
+  // 1. Reset Daily State at 08:45 AM IST
+  const resetJob = cron.schedule('45 8 * * *', () => {
+    logger.info('=== 08:45 AM Reset: Clearing daily state ===');
     resetDailyState();
   }, {
     scheduled: true,
     timezone: "Asia/Kolkata"
   });
 
-  jobsStarted = true;
-  logger.info('All cron jobs scheduled successfully (9:00 AM Reset, 9:15 AM Scan/Buy, 10:55 AM Exit)');
+  // 2. Continuous Scanner: 9:00 AM to 9:30 AM IST (every 2 minutes)
+  const scannerJob = cron.schedule('*/2 9 * * *', async () => {
+    const now = new Date();
+    // Gating for exact 9:00 to 9:30 window
+    const minutes = now.getMinutes();
+    if (minutes > 30) {
+      return;
+    }
 
-  // Return for testing/manual trigger if needed
-  return { morningJob, exitJob, midnightReset };
+    logger.info(`=== ${now.toLocaleTimeString('en-US', { timeZone: 'Asia/Kolkata' })} Scanner Triggered ===`);
+    try {
+      const results = await runScanner();
+      logger.info(`Scanner completed. Ranked ${results.length} stocks.`);
+    } catch (error) {
+      logger.error('Continuous scanner job failed', { error: error.message });
+    }
+  }, {
+    scheduled: true,
+    timezone: "Asia/Kolkata"
+  });
+
+  // 3. Purchase Execution at 09:30 AM IST
+  const buyJob = cron.schedule('30 9 * * *', async () => {
+    logger.info('=== 09:30 AM Execution Job Triggered ===');
+    try {
+      // Run scanner one final time to get the latest 9:30 AM quotes/ranks
+      const rankedStocks = await runScanner();
+      
+      if (rankedStocks && rankedStocks.length > 0) {
+        const tradeResult = await executeMorningTrade(rankedStocks);
+        if (tradeResult.success) {
+          logger.info('Morning trade successfully executed', tradeResult);
+        } else {
+          logger.warn('Morning trade execution failed or skipped', { reason: tradeResult.reason });
+        }
+      } else {
+        logger.warn('No ranked stocks available at 9:30 AM.');
+      }
+    } catch (error) {
+      logger.error('Morning purchase job failed', { error: error.message });
+    }
+  }, {
+    scheduled: true,
+    timezone: "Asia/Kolkata"
+  });
+
+  // 4. Force Sell / Square-Off at 09:45 AM IST
+  const exitJob = cron.schedule('45 9 * * *', async () => {
+    logger.info('=== 09:45 AM Exit Job Triggered: Squaring off position ===');
+    try {
+      const sellResult = await executeSell('TIME_EXIT_0945AM');
+      if (sellResult.success) {
+        logger.info('Auto Sell/Square-Off completed', { pnl: sellResult.trade?.pnl });
+      } else {
+        logger.info('No active position to square off at 9:45 AM.');
+      }
+    } catch (error) {
+      logger.error('Morning exit job failed', { error: error.message });
+    }
+  }, {
+    scheduled: true,
+    timezone: "Asia/Kolkata"
+  });
+
+  jobsStarted = true;
+  logger.info('All morning trading cron jobs scheduled (8:45 AM Reset, 9:00-9:30 AM Scans, 9:30 AM Buy, 9:45 AM Exit)');
+
+  return { resetJob, scannerJob, buyJob, exitJob };
 };
 
 export const stopSchedulers = () => {
-  // In production you would store job references and .stop() them
-  logger.info('Schedulers stopped (restart app to re-enable)');
+  logger.info('Schedulers stopped');
+  jobsStarted = false;
 };
+
