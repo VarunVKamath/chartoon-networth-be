@@ -13,6 +13,8 @@ import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import winston from 'winston';
+import { createServer } from 'http';
+import { Server } from 'socket.io';
 import apiRoutes from './routes/index.js';
 import { initializeKite, restoreAndValidateSession } from './services/kiteService.js';
 import { startSchedulers } from './jobs/scheduler.js';
@@ -128,7 +130,25 @@ const startServer = async () => {
     // Start the cron schedulers
     startSchedulers();
 
-    app.listen(PORT, () => {
+    const server = createServer(app);
+    const io = new Server(server, {
+      cors: {
+        origin: allowedOrigins,
+        credentials: true
+      }
+    });
+
+    global.io = io;
+
+    io.on('connection', (socket) => {
+      logger.info(`Socket client connected: ${socket.id}`);
+      
+      socket.on('disconnect', () => {
+        logger.info(`Socket client disconnected: ${socket.id}`);
+      });
+    });
+
+    server.listen(PORT, () => {
       logger.info(`🚀 Backend server running on http://localhost:${PORT}`);
       logger.info(`📊 Dashboard should connect to this API`);
       logger.info(`⚠️  Trading Mode: ${process.env.REAL_TRADING === 'true' ? 'REAL (DANGEROUS)' : 'PAPER (SAFE)'}`);

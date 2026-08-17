@@ -34,6 +34,16 @@ import {
   resetDailyState
 } from '../services/orderService.js';
 import { isWithinTradingWindow } from '../services/timeService.js';
+import { 
+  getWatchlist, 
+  updateWatchlist, 
+  runScanner, 
+  getCandleData, 
+  aggregateTo3Min, 
+  setSimulatedTime, 
+  getSimulatedTime,
+  getActiveISTTime
+} from '../services/earlyEdgeService.js';
 
 const router = express.Router();
 
@@ -231,6 +241,86 @@ router.post('/trade/mode', (req, res) => {
     res.json({ success: true, mode: 'PAPER' });
   } catch (error) {
     res.status(500).json({ error: error.message });
+  }
+});
+
+// === EARLY EDGE INTRA-DAY MOMENTUM SCANNER ===
+router.get('/early-edge/watchlist', (req, res) => {
+  try {
+    res.json({ watchlist: getWatchlist() });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+router.post('/early-edge/watchlist', (req, res) => {
+  try {
+    const { watchlist } = req.body;
+    const updated = updateWatchlist(watchlist);
+    res.json({ success: true, watchlist: updated });
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+router.get('/early-edge/scanner', async (req, res) => {
+  try {
+    const { simulatedTime } = req.query;
+    if (simulatedTime !== undefined) {
+      setSimulatedTime(simulatedTime);
+    }
+    const results = await runScanner();
+    res.json({
+      success: true,
+      timestamp: getActiveISTTime().toISOString(),
+      simulatedTime: getSimulatedTime(),
+      scannerResults: results
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+router.get('/early-edge/chart', async (req, res) => {
+  try {
+    const { symbol, simulatedTime, interval } = req.query;
+    if (!symbol) {
+      return res.status(400).json({ error: 'symbol parameter is required' });
+    }
+
+    if (simulatedTime !== undefined) {
+      setSimulatedTime(simulatedTime);
+    }
+
+    const activeTime = getActiveISTTime();
+    let candles = await getCandleData(symbol.toUpperCase(), activeTime, true);
+
+    if (interval === '3m') {
+      candles = aggregateTo3Min(candles);
+    }
+
+    res.json({
+      success: true,
+      symbol: symbol.toUpperCase(),
+      interval: interval || '1m',
+      candles: candles
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+router.post('/early-edge/simulate', (req, res) => {
+  try {
+    const { simulatedTime } = req.body;
+    const result = setSimulatedTime(simulatedTime);
+    res.json({
+      success: true,
+      simulatedTime: result.simulatedTime,
+      activeISTTime: getActiveISTTime().toISOString()
+    });
+  } catch (error) {
+    res.status(400).json({ error: error.message });
   }
 });
 

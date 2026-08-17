@@ -118,3 +118,33 @@ When deploying to Azure, you must update your Redirect/Callback URL in the [Zero
 - The backend persists the daily authentication token locally in `storage/session.json`.
 - Because Zerodha sessions naturally expire every morning, the ephemeral file system used by Azure App Service containers is completely fine.
 - If the App Service restarts or recycles, the session will be cleared. Simply visit the frontend dashboard and click **Connect** to authorize a new session for the day.
+
+---
+
+## 📈 EarlyEdge Morning Momentum Scanner (9:30 - 9:45 AM)
+
+The Early Edge Morning Momentum Scanner is a modular trading assistant designed to identify high-probability continuation moves between **9:30 AM and 9:45 AM IST** on watched NSE stocks.
+
+### 🌟 Key Features
+- **Opening Range Engine (9:15 - 9:30)**: Calculates the high-low price boundary of the first 15 one-minute candles. Displays boundaries as horizontal lines on the chart.
+- **Scoring Engine (0-100)**: Evaluates early morning momentum based on weighted factors:
+  - *Opening Range Breakout (30% weight)*: Current price breaks OR High with volume confirmation.
+  - *Volume Surge (20% weight)*: Latest candle volume is &ge; 1.8x the opening range average volume.
+  - *Price vs VWAP (15% weight)*: Price is holding above the Volume Weighted Average Price.
+  - *Relative Strength vs Nifty (20% weight)*: Outperforming the Nifty 50 index return since 9:15 AM.
+  - *Candle Strength (15% weight)*: Last 3 candles are bullish (green) with higher highs.
+- **Dynamic Targets & Stop Loss**: Recommends risk-managed targets and stop losses using ATR (Average True Range) and the Opening Range size.
+- **Interactive Simulation Slider**: Drag the clock slider on the frontend tab to simulate any minute between 9:15 AM and 10:00 AM. Backend will generate stable, deterministic candles up to that time and recalculate all parameters for easy testing.
+- **Real-Time Sockets**: Emits socket events (`opening_range_ready`, `scanner_update`) to sync dashboard metrics without page reloads.
+
+### 🔌 API Endpoints
+- `GET /api/early-edge/watchlist`: Fetch current early edge stock watchlist.
+- `POST /api/early-edge/watchlist`: Update early edge stock watchlist.
+- `GET /api/early-edge/scanner?simulatedTime=HH:MM:SS`: Run the momentum scanner (accepts optional simulated time).
+- `GET /api/early-edge/chart?symbol=SYMBOL&simulatedTime=HH:MM:SS&interval=1m`: Fetch candle history (1m/3m) with VWAP and volume.
+- `POST /api/early-edge/simulate`: Configure backend clock simulated time.
+
+### 📡 Socket.io Broadcasts
+- `opening_range_ready`: Emitted when the 15-minute Opening Range has locked at 9:30 AM.
+- `scanner_update`: Emitted with new rankings as time advances.
+
