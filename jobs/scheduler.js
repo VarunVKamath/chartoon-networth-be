@@ -33,6 +33,11 @@ export const startSchedulers = () => {
     return;
   }
 
+  logger.warn('[Scheduler] Schedulers are temporarily disabled. Only Kite API connection is allowed.');
+  jobsStarted = true;
+  return {};
+
+
   // 9:15 AM IST - Market Open Scanner + Auto Buy
   const morningJob = cron.schedule('15 9 * * *', async () => {
     logger.info('=== 9:15 AM JOB TRIGGERED: Starting stock scan ===');

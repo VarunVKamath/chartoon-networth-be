@@ -47,6 +47,41 @@ import {
 
 const router = express.Router();
 
+// Middleware to temporarily disable all API endpoints except Kite authentication/connection
+const disableNonAuthAPIs = (req, res, next) => {
+  const allowedPaths = [
+    '/health',
+    '/auth/login-url',
+    '/auth/generate-session',
+    '/auth/login',
+    '/auth/callback',
+    '/auth/status',
+    '/auth/logout',
+    '/api/health',
+    '/api/auth/login-url',
+    '/api/auth/generate-session',
+    '/api/auth/login',
+    '/api/auth/callback',
+    '/api/auth/status',
+    '/api/auth/logout'
+  ];
+
+  const pathToCheck = req.path;
+  const originalPathToCheck = req.originalUrl.split('?')[0];
+
+  if (allowedPaths.includes(pathToCheck) || allowedPaths.includes(originalPathToCheck)) {
+    return next();
+  }
+
+  return res.status(503).json({
+    error: 'API_TEMPORARILY_DISABLED',
+    message: 'All API calls are temporarily disabled except connecting with Kite API.'
+  });
+};
+
+router.use(disableNonAuthAPIs);
+
+
 const checkTradingWindow = (req, res, next) => {
   if (!isWithinTradingWindow()) {
     return res.status(403).json({
