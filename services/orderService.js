@@ -13,7 +13,8 @@ import {
   getQuotes, 
   getCurrentPaperPosition, 
   clearPaperPosition,
-  getAvailableCash
+  getAvailableCash,
+  getRealTradingMode
 } from './kiteService.js';
 import { isWithinTradingWindow, isActiveWindow } from './timeService.js';
 import winston from 'winston';
@@ -141,7 +142,7 @@ export const canTradeToday = () => {
  * Stores entry details and starts SL/Target monitor.
  */
 export const executeBuy = async (bestStock) => {
-  if (!isActiveWindow()) {
+  if (!isActiveWindow() && bestStock.variety !== 'amo') {
     addLog('BUY rejected: Outside 8:45 AM - 10:15 AM IST active trading window.', 'warn');
     return { success: false, reason: 'Outside trading hours' };
   }
@@ -166,7 +167,10 @@ export const executeBuy = async (bestStock) => {
   }
 
   let quantity = bestStock.quantity;
-  if (!quantity) {
+  if (getRealTradingMode()) {
+    quantity = 1; // Force 1 share for real trading as per user safety requirement
+    addLog(`[Live Safety] Forcing order quantity to 1 share for live trading.`);
+  } else if (!quantity) {
     // Dynamic position sizing based on risk
     const stopLossDistance = entryPrice * (earlyEdgeSettings.stopLossPct / 100);
     const maxRiskAmount = CAPITAL_POOL * (MAX_RISK_PCT / 100);
@@ -529,10 +533,8 @@ export const executeMorningTrade = async (rankedStocks) => {
     if (earlyEdgeSettings.operatingMode === 'TEST') {
       qty = 1;
     } else {
-      // Prod Mode: Buy max whole number of shares possible
-      // Include slippage adjusted price
-      const priceWithSlippage = price * (1 + earlyEdgeSettings.slippagePct / 100);
-      qty = Math.floor(availableCash / priceWithSlippage);
+      // Prod Mode: Usually buys max shares possible, but restricted to 1 share per user instructions for safety
+      qty = 1;
     }
 
     if (qty <= 0) {

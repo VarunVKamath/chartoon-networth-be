@@ -78,6 +78,10 @@ const enforceActiveHoursOrReadOnly = (req, res, next) => {
     return next(); // Allow updating trading mode settings
   }
 
+  if (pathToCheck === '/trade/buy' || pathToCheck === '/test/trigger-idea-buy') {
+    return next(); // Allow trade buy & test buy outside active hours
+  }
+
   if (!isActiveWindow()) {
     const isWrite = ['POST', 'PUT', 'DELETE'].includes(req.method);
     if (isWrite) {
@@ -204,13 +208,52 @@ router.get('/strategy/scan', checkTradingWindow, async (req, res) => {
 });
 
 // === TRADE CONTROL ===
-router.post('/trade/buy', checkTradingWindow, async (req, res) => {
+router.post('/trade/buy', async (req, res) => {
   try {
     const { symbol } = req.body;
     if (!symbol) return res.status(400).json({ error: 'symbol required' });
     
-    const result = await manualBuy(symbol);
-    res.json(result);
+    if (!isActiveWindow()) {
+      const delaySeconds = 60;
+      const pushLiveLog = (message, level = 'info') => {
+        if (!global.liveLogs) global.liveLogs = [];
+        global.liveLogs.push({
+          time: new Date().toISOString(),
+          message,
+          level
+        });
+        if (global.liveLogs.length > 100) global.liveLogs.shift();
+      };
+
+      pushLiveLog(`[Non-Trading Hours] Scheduled AMO buy of 1 share of ${symbol.toUpperCase()} in ${delaySeconds} seconds.`, 'info');
+
+      setTimeout(async () => {
+        try {
+          if (!isSessionActive()) {
+            pushLiveLog(`[Non-Trading Hours] Scheduled AMO buy of ${symbol.toUpperCase()} failed: Kite session is not active.`, 'error');
+            return;
+          }
+          pushLiveLog(`[Non-Trading Hours] Triggering scheduled AMO buy of 1 share of ${symbol.toUpperCase()}.`, 'info');
+          const result = await manualBuy(symbol, 1, true, 'amo');
+          if (result.success) {
+            pushLiveLog(`[Non-Trading Hours] Scheduled AMO buy of 1 share of ${symbol.toUpperCase()} executed successfully! Order ID: ${result.order?.order_id || 'N/A'}.`, 'info');
+          } else {
+            pushLiveLog(`[Non-Trading Hours] Scheduled AMO buy of 1 share of ${symbol.toUpperCase()} failed: ${result.reason}`, 'error');
+          }
+        } catch (err) {
+          pushLiveLog(`[Non-Trading Hours] Error executing scheduled AMO buy: ${err.message}`, 'error');
+        }
+      }, delaySeconds * 1000);
+
+      return res.json({
+        success: true,
+        scheduled: true,
+        message: `Outside active hours. Scheduled AMO buy of ${symbol.toUpperCase()} in 60 seconds.`
+      });
+    } else {
+      const result = await manualBuy(symbol, 1);
+      res.json(result);
+    }
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -260,7 +303,7 @@ router.get('/dashboard/status', (req, res) => {
   res.json({
     status,
     currentTrade: trade,
-    mode: 'PAPER',
+    mode: getRealTradingMode() ? 'REAL' : 'PAPER',
     startingCapital: 10000,
     latestScanDecision: getLatestScanDecision(),
     lastUpdated: new Date().toISOString()
@@ -279,11 +322,9 @@ router.post('/dashboard/reset', checkTradingWindow, (req, res) => {
 router.post('/trade/mode', (req, res) => {
   try {
     const { mode } = req.body;
-    if (mode === 'REAL') {
-      return res.status(403).json({ error: "Real trading mode is disabled. Enforced to PAPER trading mode only." });
-    }
-    setRealTradingMode(false);
-    res.json({ success: true, mode: 'PAPER' });
+    const isReal = mode === 'REAL';
+    setRealTradingMode(isReal);
+    res.json({ success: true, mode: isReal ? 'REAL' : 'PAPER' });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -419,7 +460,7 @@ router.post('/early-edge/simulate', (req, res) => {
 });
 
 // === TEST MODE / DIAGNOSTICS ===
-router.post('/test/trigger-idea-buy', checkTradingWindow, async (req, res) => {
+router.post('/test/trigger-idea-buy', async (req, res) => {
   try {
     if (!isSessionActive()) {
       return res.status(400).json({ error: 'Kite session is not active. Please connect Zerodha first.' });
